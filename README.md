@@ -6,7 +6,7 @@ Collection of scripts to use in management of Active Directory.
 
 ### Create-ADgroupAndGPO.ps1
 
-Creates one global security group and one GPO per computer found in a given OU (including nested OUs). The GPO adds the group to the local `Administrators` group via Group Policy Preferences, is security-filtered so it only applies to that specific computer, and is linked to the computer's OU. Domain controllers are excluded.
+Creates one global security group and one GPO per computer found in a given OU (including nested OUs). The GPO adds the group to a local group on the computer — `Administrators` by default, or `Remote Desktop Users`, `Users`, or any custom local group via `-LocalGroup` — using Group Policy Preferences. The GPO is security-filtered so it only applies to that specific computer and is linked to the computer's OU. Domain controllers are excluded.
 
 #### Prerequisites
 
@@ -52,6 +52,17 @@ With custom naming templates (`{ServerName}` is required, `{OUPath}` is optional
     -GpoNameTemplate 'GPO-LocalAdmin-{OUPath}{ServerName}'
 ```
 
+Target another local group than `Administrators` (built-in groups `Administrators`, `Remote Desktop Users` and `Users` are targeted by their well-known SIDs; any other value is treated as a custom local group that the GPO creates on the computer if it does not exist — adjust the name templates to match):
+
+```powershell
+.\Create-ADgroupAndGPO.ps1 `
+    -ServerOU 'OU=Servers,DC=corp,DC=example,DC=com' `
+    -GroupOU 'OU=AdminGroups,DC=corp,DC=example,DC=com' `
+    -LocalGroup 'Remote Desktop Users' `
+    -GroupNameTemplate 'SEC-{OUPath}{ServerName}-RDP' `
+    -GpoNameTemplate 'LocalRDP-{OUPath}{ServerName}'
+```
+
 Repair a single computer where the group and an empty, unlinked managed GPO already exist:
 
 ```powershell
@@ -69,6 +80,7 @@ Repair a single computer where the group and an empty, unlinked managed GPO alre
 | `GroupOU` | Yes | – | OU where the security groups are created |
 | `GroupNameTemplate` | No | `SEC-{OUPath}{ServerName}-Admin` | Name template for groups |
 | `GpoNameTemplate` | No | `LocalAdmin-{OUPath}{ServerName}` | Name template for GPOs |
+| `LocalGroup` | No | `Administrators` | Local group the AD group is added to: `Administrators`, `Remote Desktop Users`, `Users`, or a custom local group name |
 | `RepairServer` | No | – | Repair a single named computer |
 | `LogFile` | No | `Create-ServerAdminGpo.log` next to the script | Transcript log path; pass `''` to disable |
 

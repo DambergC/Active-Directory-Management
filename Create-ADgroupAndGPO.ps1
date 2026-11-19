@@ -3,14 +3,15 @@
 
 <#
 .SYNOPSIS
-Creates one AD security group and one local administrator GPO per computer.
+Creates one AD security group and one local group membership GPO per computer.
 
 .DESCRIPTION
 Searches ServerOU and nested OUs for computer accounts (domain controllers
 are excluded). For each computer it creates a global security group in
-GroupOU and a GPO that adds the group to the local Administrators group via
-Group Policy Preferences, then links the GPO to the computer's OU with
-security filtering so it only applies to that computer.
+GroupOU and a GPO that adds the group to a local group on the computer
+(Administrators by default, see -LocalGroup) via Group Policy Preferences,
+then links the GPO to the computer's OU with security filtering so it only
+applies to that computer.
 
 Use {ServerName} and optionally {OUPath} in either name template. OUPath
 includes a trailing hyphen when nonempty. An existing group and GPO are
@@ -33,6 +34,14 @@ contain {OUPath}. Default: 'SEC-{OUPath}{ServerName}-Admin'.
 .PARAMETER GpoNameTemplate
 Name template for the GPOs. Must contain {ServerName} and may contain
 {OUPath}. Default: 'LocalAdmin-{OUPath}{ServerName}'.
+
+.PARAMETER LocalGroup
+Local group on the computer that the AD group is added to. The built-in
+groups 'Administrators', 'Remote Desktop Users' and 'Users' are targeted by
+their well-known SIDs. Any other value is treated as the name of a custom
+local group, which is created on the computer by the GPO if it does not
+exist. Default: 'Administrators'. Consider adjusting the name templates
+when targeting another group than Administrators.
 
 .PARAMETER RepairServer
 Name of a single computer to repair. Requires that both the group and a
@@ -61,6 +70,12 @@ under the Servers OU.
 Uses custom naming templates for groups and GPOs.
 
 .EXAMPLE
+.\Create-ADgroupAndGPO.ps1 -ServerOU 'OU=Servers,DC=corp,DC=example,DC=com' -GroupOU 'OU=AdminGroups,DC=corp,DC=example,DC=com' -LocalGroup 'Remote Desktop Users' -GroupNameTemplate 'SEC-{OUPath}{ServerName}-RDP' -GpoNameTemplate 'LocalRDP-{OUPath}{ServerName}'
+
+Adds each AD group to the local Remote Desktop Users group instead of
+Administrators.
+
+.EXAMPLE
 .\Create-ADgroupAndGPO.ps1 -ServerOU 'OU=Servers,DC=corp,DC=example,DC=com' -GroupOU 'OU=AdminGroups,DC=corp,DC=example,DC=com' -RepairServer 'SRV01'
 
 Finishes the configuration for SRV01 where the group and an empty,
@@ -81,6 +96,7 @@ param(
     [Parameter(Mandatory)] [string]$GroupOU,
     [string]$GroupNameTemplate = 'SEC-{OUPath}{ServerName}-Admin',
     [string]$GpoNameTemplate = 'LocalAdmin-{OUPath}{ServerName}',
+    [string]$LocalGroup = 'Administrators',
     [string]$RepairServer,
     [string]$LogFile = "$PSScriptRoot\Create-ServerAdminGpo.log"
 )
@@ -143,19 +159,22 @@ function Get-EmptyPolicyFiles($Gpo) {
     }
 }
 
-function Set-LocalAdminPreference($Files, $Group) {
+function Set-LocalGroupPreference($Files, $Group) {
     $memberName = [System.Security.SecurityElement]::Escape(
         "$($domain.NetBIOSName)\$($Group.SamAccountName)"
     )
     $memberSid = $Group.SID.Value
+    $targetName = [System.Security.SecurityElement]::Escape($localGroupXmlName)
+    $targetSid = ''
+    if ($localGroupSid) { $targetSid = " groupSid=`"$localGroupSid`"" }
     $uid = [guid]::NewGuid().ToString('B').ToUpperInvariant()
     $changed = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 
     [xml]$xml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <Groups clsid="{3125E937-EB16-4B4C-9934-544FC6D24D26}">
-  <Group clsid="{6D4A79E4-529C-4481-ABD0-F5BD7EA93BA7}" name="Administrators (built-in)" image="2" changed="$changed" uid="$uid">
-    <Properties action="U" groupName="Administrators (built-in)" groupSid="S-1-5-32-544" deleteAllUsers="0" deleteAllGroups="0" removeAccounts="0">
+  <Group clsid="{6D4A79E4-529C-4481-ABD0-F5BD7EA93BA7}" name="$targetName" image="2" changed="$changed" uid="$uid">
+    <Properties action="U" groupName="$targetName"$targetSid deleteAllUsers="0" deleteAllGroups="0" removeAccounts="0">
       <Members>
         <Member name="$memberName" action="ADD" sid="$memberSid" />
       </Members>
@@ -180,6 +199,28 @@ foreach ($template in @($GroupNameTemplate, $GpoNameTemplate)) {
         $template.Replace('{ServerName}', '').Replace('{OUPath}', '') -match '[{}]') {
         throw "Ogiltig namnmall '$template'. Anvand {ServerName} och valfritt {OUPath}."
     }
+}
+
+$LocalGroup = $LocalGroup.Trim()
+if (-not $LocalGroup) {
+    throw 'LocalGroup far inte vara tomt.'
+}
+# Built-in groups are targeted by well-known SID; anything else is treated
+# as a custom local group that the GPO creates on the computer if missing.
+$builtinLocalGroups = @{
+    'Administrators'       = 'S-1-5-32-544'
+    'Remote Desktop Users' = 'S-1-5-32-555'
+    'Users'                = 'S-1-5-32-545'
+}
+$builtinName = @($builtinLocalGroups.Keys) -ieq $LocalGroup | Select-Object -First 1
+if ($builtinName) {
+    $LocalGroup = $builtinName
+    $localGroupXmlName = "$LocalGroup (built-in)"
+    $localGroupSid = $builtinLocalGroups[$LocalGroup]
+}
+else {
+    $localGroupXmlName = $LocalGroup
+    $localGroupSid = $null
 }
 
 $transcriptStarted = $false
@@ -308,7 +349,8 @@ try {
             }
 
             if (-not $PSCmdlet.ShouldProcess(
-                    "$name ($($entry.OuDn))", "Konfigurera '$groupName' via '$gpoName'")) {
+                    "$name ($($entry.OuDn))",
+                    "Konfigurera '$groupName' i lokala gruppen '$LocalGroup' via '$gpoName'")) {
                 continue
             }
 
@@ -316,7 +358,8 @@ try {
                 Write-Host "${name}: Skapar '$groupName'."
                 $group = New-ADGroup -Name $groupName -DisplayName $groupName `
                     -SamAccountName (Get-GroupSamAccountName $groupName) `
-                    -Description "Lokala administratorer pa $name" -GroupCategory Security `
+                    -Description "Medlemmar i lokala gruppen '$LocalGroup' pa $name" `
+                    -GroupCategory Security `
                     -GroupScope Global -Path $groupDn -Server $dc -PassThru
             }
             if (-not $gpo) {
@@ -339,9 +382,9 @@ try {
                 throw "Ovantad sakerhetsfiltrering for '$gpoName'. GPO:n lankas inte."
             }
 
-            Set-LocalAdminPreference $files $group
+            Set-LocalGroupPreference $files $group
             New-GPLink -Guid $gpo.Id -Target $entry.OuDn -LinkEnabled Yes @gp | Out-Null
-            Write-Host "${name}: Klart. '$groupName' laggs till via '$gpoName'."
+            Write-Host "${name}: Klart. '$groupName' laggs till i '$LocalGroup' via '$gpoName'."
         }
         catch {
             $errors++
