@@ -1,6 +1,13 @@
 # Active-Directory-Management
 
-Collection of scripts to use in management of Active Directory.
+Collection of scripts for Active Directory and Windows administration.
+
+## Table of contents
+
+| Script | Instructions | Purpose |
+|---|---|---|
+| [`Create-ADgroupAndGPO.ps1`](Create-ADgroupAndGPO.ps1) | [Create AD groups and GPOs](#create-adgroupandgpops1) | Create per-computer security groups and GPOs. |
+| [`FolderSettings.ps1`](FolderSettings.ps1) | [Back up and restore folder settings](#foldersettingsps1) | Back up and restore NTFS security and SMB shares. |
 
 ## Scripts
 
@@ -95,4 +102,56 @@ For full help, run:
 
 ```powershell
 Get-Help .\Create-ADgroupAndGPO.ps1 -Full
+```
+
+### FolderSettings.ps1
+
+Backs up a local folder's NTFS security and direct SMB shares to XML, then restores them after the folder has been recreated. It saves the folder's owner, group, permissions and inheritance settings, plus share permissions and supported share properties. Auditing rules are optional.
+
+#### Prerequisites
+
+- Windows PowerShell 5.1 or later, running as administrator, and the `SmbShare` module.
+- Run on the original computer. The folder must exist at the saved local path for both backup and restore; the script does **not** create it. Volume roots, junctions and symbolic links cannot be selected as the target folder.
+- Store the XML outside the target folder, in an existing directory. The script will not overwrite an existing backup. Protect the file from tampering and restore only a trusted backup.
+- Restoring ownership may require the **Restore files and directories** privilege. Backing up and restoring audit rules with `-IncludeAudit` requires the **Manage auditing and security log** privilege.
+
+#### How to run
+
+Before the upgrade, save the settings:
+
+```powershell
+.\FolderSettings.ps1 -Mode Backup -FolderPath 'D:\Application\Data' -XmlPath 'C:\Backups\Data.xml'
+```
+
+To include the target folder's auditing rules, add `-IncludeAudit` to the backup command. The restore uses the audit selection saved in the XML.
+
+After the upgrade, recreate the folder at the same path, then preview and restore:
+
+```powershell
+.\FolderSettings.ps1 -Mode Restore -XmlPath 'C:\Backups\Data.xml' -WhatIf
+.\FolderSettings.ps1 -Mode Restore -XmlPath 'C:\Backups\Data.xml'
+```
+
+`-FolderPath` is optional during restore; if specified, it must match the path saved in the XML. `-WhatIf` previews the operation and does not change permissions or shares.
+
+#### Parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `Mode` | Yes | `Backup` or `Restore`. |
+| `FolderPath` | Backup only | Existing absolute local folder path; optional on restore and must match the saved path. |
+| `XmlPath` | Yes | Backup XML file path. |
+| `IncludeAudit` | No | Include the target folder's audit rules in the backup; ignored on restore. |
+
+#### Behavior and safety
+
+- Restore replaces the selected folder's saved NTFS security, including owner and group. It resets existing descendant permissions to inherited permissions: **explicit permissions on subfolders and files are removed**, and blocked inheritance is reset. Child owners are not changed. Only permissions configured for inheritance apply to children; permissions limited to the target folder do not propagate.
+- The script updates matching saved SMB shares or recreates missing shares pointing to the existing folder. It does not create the folder. Conflicting share names stop restore, and shares absent from the backup are left unchanged.
+- File contents and individual child ACLs are not backed up. Parent ACLs are not saved, so changes to the parent can affect inherited permissions. Junctions and symbolic links below the target are not followed.
+- DFS, administrative, temporary and clustered shares, as well as server-wide SMB settings, are not backed up. Restore is not transactional: if an error occurs, earlier changes may already have been applied.
+
+For full help, run:
+
+```powershell
+Get-Help .\FolderSettings.ps1 -Full
 ```
