@@ -7,7 +7,7 @@ Collection of scripts for Active Directory and Windows administration.
 | Script | Instructions | Purpose |
 |---|---|---|
 | [`Create-ADgroupAndGPO.ps1`](Create-ADgroupAndGPO.ps1) | [Create AD groups and GPOs](#create-adgroupandgpops1) | Create per-computer security groups and GPOs. |
-| [`FolderSettings.ps1`](FolderSettings.ps1) | [Back up and restore folder settings](#foldersettingsps1) | Back up and restore NTFS security and SMB shares. |
+| [`FolderSettings.ps1`](FolderSettings.ps1) | [Back up and restore folder settings](#foldersettingsps1) | Backup and restore NTFS security and SMB shares. |
 
 ## Scripts
 
