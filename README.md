@@ -111,7 +111,7 @@ Backs up a local folder's NTFS security and direct SMB shares to XML, then resto
 #### Prerequisites
 
 - Windows PowerShell 5.1 or later, running as administrator, and the `SmbShare` module.
-- Run on the original computer. The folder must exist at the saved local path for both backup and restore; the script does **not** create it. Volume roots, junctions and symbolic links cannot be selected as the target folder.
+- Run on the source computer for backup and on the destination computer for restore. The destination may be another server, but the folder must exist at the same saved local path; the script does **not** create it. Volume roots, junctions and symbolic links cannot be selected as the target folder.
 - Store the XML outside the target folder, in an existing directory. The script will not overwrite an existing backup. Protect the file from tampering and restore only a trusted backup.
 - Restoring ownership may require the **Restore files and directories** privilege. Backing up and restoring audit rules with `-IncludeAudit` requires the **Manage auditing and security log** privilege.
 
@@ -125,7 +125,7 @@ Before the upgrade, save the settings:
 
 To include the target folder's auditing rules, add `-IncludeAudit` to the backup command. The restore uses the audit selection saved in the XML.
 
-After the upgrade, recreate the folder at the same path, then preview and restore:
+Copy the XML to the destination server, recreate the folder at the same local path, then preview and restore:
 
 ```powershell
 .\FolderSettings.ps1 -Mode Restore -XmlPath 'C:\Backups\Data.xml' -WhatIf
@@ -146,8 +146,9 @@ After the upgrade, recreate the folder at the same path, then preview and restor
 #### Behavior and safety
 
 - Restore replaces the selected folder's saved NTFS security, including owner and group. It resets existing descendant permissions to inherited permissions: **explicit permissions on subfolders and files are removed**, and blocked inheritance is reset. Child owners are not changed. Only permissions configured for inheritance apply to children; permissions limited to the target folder do not propagate.
+- Account SIDs in NTFS and share security descriptors are restored unchanged. Domain accounts must be available on the destination; source-server local accounts have different SIDs on another server and may not resolve or grant access. The script does not remap accounts.
 - The script updates matching saved SMB shares or recreates missing shares pointing to the existing folder. It does not create the folder. Conflicting share names stop restore, and shares absent from the backup are left unchanged.
-- File contents and individual child ACLs are not backed up. Parent ACLs are not saved, so changes to the parent can affect inherited permissions. Junctions and symbolic links below the target are not followed.
+- File contents and individual child ACLs are not backed up. Parent ACLs are not saved, so different parent permissions on the destination can affect inherited permissions or cause verification to fail. Junctions and symbolic links below the target are not followed.
 - DFS, administrative, temporary and clustered shares, as well as server-wide SMB settings, are not backed up. Restore is not transactional: if an error occurs, earlier changes may already have been applied.
 
 For full help, run:
