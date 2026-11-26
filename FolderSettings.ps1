@@ -12,8 +12,11 @@ the restored folder (explicit permissions and blocked inheritance are removed).
 .EXAMPLE
 .\FolderSettings.ps1 -Mode Restore -XmlPath 'C:\Backups\Data.xml'
 .NOTES
-Run elevated on the same Windows computer, using Windows PowerShell 5.1.
+Run elevated on each Windows computer, using Windows PowerShell 5.1.
 The folder must already exist when restoring. Back up XML outside the folder.
+The backup can be restored on another computer at the same local path.
+Account SIDs are restored unchanged; local accounts from another computer
+may not resolve or grant access on the destination.
 Captures owner, group, DACL, inheritance flags, and direct SMB share settings.
 Use -IncludeAudit during backup to also capture and restore the SACL; this
 requires the Manage auditing and security log privilege. Restoring ownership
@@ -162,8 +165,8 @@ if ($IncludeAudit) {
     Write-Warning '-IncludeAudit is ignored during restore; the audit selection saved in the XML is used.'
 }
 $backup = Import-Clixml -LiteralPath $XmlPath
-if ($backup.Version -ne 1 -or $backup.ComputerName -ne $env:COMPUTERNAME) {
-    throw 'Unsupported backup version or different computer. Restore on the original computer.'
+if ($backup.Version -ne 1) {
+    throw 'Unsupported backup version.'
 }
 $folder = Get-LocalFolder $backup.FolderPath
 if ($FolderPath -and (Get-LocalFolder $FolderPath) -ne $folder) {
