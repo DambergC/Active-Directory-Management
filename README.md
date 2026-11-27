@@ -8,8 +8,61 @@ Collection of scripts for Active Directory and Windows administration.
 |---|---|---|
 | [`Create-ADgroupAndGPO.ps1`](Create-ADgroupAndGPO.ps1) | [Create AD groups and GPOs](#create-adgroupandgpops1) | Create per-computer security groups and GPOs. |
 | [`FolderSettings.ps1`](FolderSettings.ps1) | [Back up and restore folder settings](#foldersettingsps1) | Backup and restore NTFS security and SMB shares. |
+| [`Get-EnvironmentHealth.ps1`](Get-EnvironmentHealth.ps1) | [Collect an environment health report](#get-environmenthealthps1) | Read-only AD, server and Configuration Manager checks. |
 
 ## Scripts
+
+### Get-EnvironmentHealth.ps1
+
+Collects a read-only report containing direct and recursively resolved members of Domain Admins, Enterprise Admins and Backup Operators; new server computer objects; gMSA inventory and optional host tests; expiring certificates; Configuration Manager site version and backup messages; fixed-disk free space; last boot time; and privileged logon events.
+
+#### Prerequisites
+
+- Windows PowerShell 5.1 or later on a domain-connected Windows computer with the ActiveDirectory RSAT module and read access to AD. The script runs in the current user's security context and makes no configuration changes.
+- WinRM/PowerShell remoting and permission to read the LocalMachine certificate store on each server. gMSA tests also require the ActiveDirectory module on each specified host and permission to run `Test-ADServiceAccount` there.
+- Remote CIM/WMI access to each server and the Configuration Manager SMS Provider, including permission to read the site namespace and status messages.
+- Permission to read the Security event log on every explicitly specified log server. Relevant audit policies must be enabled and events must still be retained.
+
+#### How to run
+
+```powershell
+$report = .\Get-EnvironmentHealth.ps1 `
+    -Servers 'srv01.corp.example.com', 'srv02.corp.example.com' `
+    -LogServers 'dc01.corp.example.com', 'dc02.corp.example.com', 'srv01.corp.example.com' `
+    -GmsaTests @{ 'srv01.corp.example.com' = @('svcApp') } `
+    -SccmProvider 'sccm01.corp.example.com' -SiteCode 'ABC'
+
+$report | Select-Object Check, Target, Status, Detail | Format-Table -Wrap
+$report | Where-Object { $_.Status -ne 'OK' } | Format-List
+$report | Where-Object { $_.Check -eq 'Privileged logons' } | Select-Object -ExpandProperty Data
+$report | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 'C:\Reports\environment-health.json'
+```
+
+Create the report directory first and restrict access to the resulting file: membership, hostnames and security events can be sensitive. Omit optional targets to skip those checks; skipped checks are reported as `NotConfigured`, not as healthy. Each result has `Check`, `Target`, `Status`, `Detail` and a `Data` array. `Warning` means an observed threshold or backup condition needs review, `Error` means collection failed, and `Partial` means logon matching may be incomplete. An AD initialization failure stops the script; individual check failures are returned as results. Empty `Data` is not proof of health if the status is not `OK`.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `Servers` | None | Explicit critical servers for certificates, disks and boot times. |
+| `LogServers` | None | Computers whose local Security logs are queried; include all relevant DCs and servers. |
+| `GmsaTests` | None | Hashtable of host names to arrays of installed gMSA names to test on those hosts. |
+| `SccmProvider`, `SiteCode` | None | SMS Provider host and three-character site code; provide both or neither. |
+| `NewServerDays` | 30 | Lookback for server computer-object creation. |
+| `CertificateDays` | 60 | Report certificates expiring in fewer than this many days, including expired certificates. |
+| `LogonDays` | 1 | Security event lookback in days. |
+| `BackupMaxAgeDays` | 2 | Lookback for Configuration Manager backup status messages. |
+| `DiskFreePercent` | 20 | Warn when a fixed logical disk has strictly less than this percentage free. |
+
+#### Scope and interpretation
+
+- Group checks cover the current domain's Domain Admins and built-in Backup Operators and the forest root's Enterprise Admins. Membership is resolved at report time; foreign principals or inaccessible domains can prevent recursive resolution. Review both direct and effective entries; a failure makes the logon check `Partial`.
+- New servers are AD computer objects created during the lookback whose `operatingSystem` attribute contains `Server`; stale or missing attributes and other domains are not covered.
+- gMSA inventory is AD configuration, not proof that an account works. `GmsaTests` tests only the named accounts on the named hosts, not every possible host.
+- Certificates are limited to `Cert:\LocalMachine\My` on `Servers`; other stores, user certificates and certificate authorities are not scanned.
+- SCCM backup reports success message 5035 and subsequent warning/error status messages from `SMS_SITE_BACKUP` within the lookback. `OK` indicates a recent success message with no later warning/error in that window, not that a later backup completed or that a restore will work. Other backup products and SQL-only backups are not checked. See [Microsoft's status-message reference](https://learn.microsoft.com/en-us/intune/configmgr/develop/reference/core/servers/manage/sms_statusmessage-server-wmi-class).
+- Logons include event 4624 when the target SID matches a currently resolved member of the three groups, plus **all** event 4672 special-privilege assignments, including service and system accounts. Event 4672 can be correlated with 4624 via `LogonId` on the same host. Group membership at the time of an event, other privileged groups, events on unlisted hosts, missing audit policy and expired logs are not covered. Results can be large.
+- Disk checks cover fixed logical disks only, not unmounted volumes or network shares. Last boot time is informational, not an uptime alert.
+
+For full help, run `Get-Help .\Get-EnvironmentHealth.ps1 -Full`.
 
 ### Create-ADgroupAndGPO.ps1
 
